@@ -1,0 +1,244 @@
+version: '3.9'
+
+# ============================================================
+# BANKTO™ Production Docker Compose
+# Services: bankto-api, bankto-core, bankto-intell, bankto-web
+# Infrastructure: PostgreSQL HA, Redis, monitoring stack
+# ============================================================
+
+networks:
+  bankto-internal:
+    driver: bridge
+  bankto-public:
+    driver: bridge
+
+volumes:
+  postgres-api-data:
+  postgres-core-data:
+  postgres-intell-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+
+services:
+
+  # ── Databases ─────────────────────────────────────────────────────────────
+
+  postgres-api:
+    image: postgres:16-alpine
+    container_name: bankto-postgres-api
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bankto_api
+      POSTGRES_USER: bankto_api
+      POSTGRES_PASSWORD: ${POSTGRES_API_PASSWORD}
+    volumes:
+      - postgres-api-data:/var/lib/postgresql/data
+    networks:
+      - bankto-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bankto_api -d bankto_api"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-core:
+    image: postgres:16-alpine
+    container_name: bankto-postgres-core
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bankto_core
+      POSTGRES_USER: bankto_core
+      POSTGRES_PASSWORD: ${POSTGRES_CORE_PASSWORD}
+    volumes:
+      - postgres-core-data:/var/lib/postgresql/data
+    networks:
+      - bankto-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bankto_core -d bankto_core"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-intell:
+    image: postgres:16-alpine
+    container_name: bankto-postgres-intell
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bankto_intell
+      POSTGRES_USER: bankto_intell
+      POSTGRES_PASSWORD: ${POSTGRES_INTELL_PASSWORD}
+    volumes:
+      - postgres-intell-data:/var/lib/postgresql/data
+    networks:
+      - bankto-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bankto_intell -d bankto_intell"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: bankto-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - bankto-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Application Services ──────────────────────────────────────────────────
+
+  bankto-api:
+    build:
+      context: ../bankto-api
+      dockerfile: Dockerfile
+    container_name: bankto-api
+    restart: unless-stopped
+    depends_on:
+      postgres-api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://bankto_api:${POSTGRES_API_PASSWORD}@postgres-api:5432/bankto_api
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      JWT_SECRET: ${JWT_SECRET}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      CORE_SERVICE_URL: http://bankto-core:4001
+      CORE_SERVICE_API_KEY: ${CORE_SERVICE_API_KEY}
+      INTELL_SERVICE_URL: http://bankto-intell:4002
+      INTELL_SERVICE_API_KEY: ${INTELL_SERVICE_API_KEY}
+      THROTTLE_TTL: 60000
+      THROTTLE_LIMIT: 100
+    networks:
+      - bankto-internal
+      - bankto-public
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  bankto-core:
+    build:
+      context: ../bankto-core
+      dockerfile: Dockerfile
+    container_name: bankto-core
+    restart: unless-stopped
+    depends_on:
+      postgres-core:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4001
+      DATABASE_URL: postgresql://bankto_core:${POSTGRES_CORE_PASSWORD}@postgres-core:5432/bankto_core
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      API_SERVICE_URL: http://bankto-api:3000
+      API_SERVICE_KEY: ${CORE_SERVICE_API_KEY}
+      INTELL_SERVICE_URL: http://bankto-intell:4002
+      INTELL_SERVICE_API_KEY: ${INTELL_SERVICE_API_KEY}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_FINANCIAL_ACCOUNT_ID: ${STRIPE_FINANCIAL_ACCOUNT_ID}
+      CIRCLE_API_KEY: ${CIRCLE_API_KEY}
+      CIRCLE_WALLET_ID: ${CIRCLE_WALLET_ID}
+      CIRCLE_DEFAULT_CHAIN: ${CIRCLE_DEFAULT_CHAIN:-ETH}
+      FIREBLOCKS_API_KEY: ${FIREBLOCKS_API_KEY}
+      FIREBLOCKS_PRIVATE_KEY: ${FIREBLOCKS_PRIVATE_KEY}
+      FIREBLOCKS_VAULT_ACCOUNT_ID: ${FIREBLOCKS_VAULT_ACCOUNT_ID:-0}
+    networks:
+      - bankto-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  bankto-intell:
+    build:
+      context: ../bankto-intell
+      dockerfile: Dockerfile
+    container_name: bankto-intell
+    restart: unless-stopped
+    depends_on:
+      postgres-intell:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4002
+      DATABASE_URL: postgresql://bankto_intell:${POSTGRES_INTELL_PASSWORD}@postgres-intell:5432/bankto_intell
+      CORE_SERVICE_URL: http://bankto-core:4001
+      CORE_SERVICE_API_KEY: ${CORE_SERVICE_API_KEY}
+      INTELL_API_KEY: ${INTELL_SERVICE_API_KEY}
+    networks:
+      - bankto-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  bankto-web:
+    build:
+      context: ../bankto-web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    container_name: bankto-web
+    restart: unless-stopped
+    depends_on:
+      - bankto-api
+    environment:
+      NODE_ENV: production
+    networks:
+      - bankto-public
+    ports:
+      - "80:3000"
+
+  # ── Monitoring ────────────────────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: bankto-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - bankto-internal
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: bankto-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - bankto-internal
+    ports:
+      - "3001:3000"
