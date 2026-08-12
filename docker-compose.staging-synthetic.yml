@@ -78,7 +78,7 @@ services:
       DATABASE_URL: ${CORE_DATABASE_URL:?CORE_DATABASE_URL is required}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      CORE_SERVICE_KEY: ${CORE_SERVICE_KEY:?CORE_SERVICE_KEY is required}
+      API_SERVICE_KEY: ${CORE_SERVICE_KEY:?CORE_SERVICE_KEY is required}
       FINANCIAL_INTEGRITY_ENVIRONMENT: non-production
     depends_on:
       core-db:
@@ -100,8 +100,8 @@ services:
       DATABASE_URL: ${API_DATABASE_URL:?API_DATABASE_URL is required}
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:?AUTH0_DOMAIN is required}
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required}
-      CORE_SERVICE_URL: http://core:4101
-      CORE_SERVICE_KEY: ${CORE_SERVICE_KEY:?CORE_SERVICE_KEY is required}
+      CORE_SERVICE_URL: http://core:4101/api/v1
+      CORE_SERVICE_API_KEY: ${CORE_SERVICE_KEY:?CORE_SERVICE_KEY is required}
       INTELL_SERVICE_URL: http://intell-advisory:8080
     depends_on:
       api-db:
