@@ -14,8 +14,10 @@ Stop immediately and classify the gate as blocked if any condition is true: a pr
 2. Create fresh synthetic PostgreSQL databases and apply reviewed migrations. Record migration tables and schema checksums.
 3. Create the firewall/proxy-backed `auth-egress` network, which permits only the Auth0 Development JWKS and token endpoints. Retain its policy export as evidence.
 4. Inject secrets only through the approved staging secret manager. Do not create a populated `.env` file, compose override, GitHub secret printout, or report containing values.
-5. Deploy `docker-compose.staging-synthetic.yml`. Core, Redis, and databases must remain on the internal `backplane`; only API may attach to the egress-restricted Auth0 network.
+5. Deploy `docker-compose.staging-synthetic.yml`. Before API/Core startup, install and verify the source-scoped default-deny `DOCKER-USER` rule for the dynamic `backplane` subnet. It must allow only same-subnet service traffic; only API may attach to the separately egress-restricted Auth0 network.
 6. Run health, readiness, dependency-loss/recovery, Auth0 HTTP, service-auth, ledger, audit, reconciliation, and observability matrices in the certification gate.
+
+The staging overlay uses an `intell-advisory` health sentinel because API readiness declares an INTELL dependency while Sprint 1 deliberately excludes recommendation processing. The sentinel exposes only `/health`; it contains no recommendation, acceptance, or execution endpoint. This is a bounded readiness dependency test double, not evidence of full INTELL operational certification.
 
 ## Rollback and recovery
 

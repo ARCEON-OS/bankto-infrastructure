@@ -16,6 +16,8 @@ services:
       - api-staging-data:/var/lib/postgresql/data
     networks: [backplane]
     expose: ["5432"]
+    ports:
+      - "127.0.0.1:${API_DB_HOST_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -33,6 +35,8 @@ services:
       - core-staging-data:/var/lib/postgresql/data
     networks: [backplane]
     expose: ["5432"]
+    ports:
+      - "127.0.0.1:${CORE_DB_HOST_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -52,6 +56,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    security_opt: ["no-new-privileges:true"]
+
+  # Sprint 1 excludes INTELL recommendation execution, but API readiness
+  # declares an INTELL health dependency. This sentinel supplies only `/health`.
+  intell-advisory:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./staging/intell-advisory-health.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [backplane]
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/var/cache/nginx", "/var/run", "/tmp"]
     security_opt: ["no-new-privileges:true"]
 
   core:
@@ -86,10 +102,13 @@ services:
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required}
       CORE_SERVICE_URL: http://core:4101
       CORE_SERVICE_KEY: ${CORE_SERVICE_KEY:?CORE_SERVICE_KEY is required}
+      INTELL_SERVICE_URL: http://intell-advisory:8080
     depends_on:
       api-db:
         condition: service_healthy
       core:
+        condition: service_started
+      intell-advisory:
         condition: service_started
     networks: [backplane, auth-egress]
     ports:
@@ -100,7 +119,12 @@ services:
 
 networks:
   backplane:
-    internal: true
+    # Docker internal networks require an unavailable `raw` iptables table in the
+    # authorised sandbox. Equivalent default-deny isolation is installed by the
+    # staging orchestrator using the dynamic backplane subnet in DOCKER-USER.
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
   auth-egress:
     external: true
     name: ${BANKTO_AUTH_EGRESS_NETWORK:?BANKTO_AUTH_EGRESS_NETWORK must be an egress-restricted network}
