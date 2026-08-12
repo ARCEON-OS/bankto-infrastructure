@@ -1,0 +1,111 @@
+name: bankto-staging-synthetic
+
+# BPMD-001 synthetic-state staging overlay.
+# This file contains no secrets, tokens, production endpoints, or live-rail credentials.
+# `auth-egress` must be a separately provisioned firewall/proxy network that permits only
+# the approved Auth0 Development endpoints. Do not attach an unrestricted default network.
+
+services:
+  api-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${API_POSTGRES_DB:-bankto_api_staging_synthetic}
+      POSTGRES_USER: ${API_POSTGRES_USER:?API_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${API_POSTGRES_PASSWORD:?API_POSTGRES_PASSWORD is required}
+    volumes:
+      - api-staging-data:/var/lib/postgresql/data
+    networks: [backplane]
+    expose: ["5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+
+  core-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${CORE_POSTGRES_DB:-bankto_core_staging_synthetic}
+      POSTGRES_USER: ${CORE_POSTGRES_USER:?CORE_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${CORE_POSTGRES_PASSWORD:?CORE_POSTGRES_PASSWORD is required}
+    volumes:
+      - core-staging-data:/var/lib/postgresql/data
+    networks: [backplane]
+    expose: ["5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis-staging-data:/data
+    networks: [backplane]
+    expose: ["6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+
+  core:
+    image: ${BANKTO_CORE_IMAGE:?BANKTO_CORE_IMAGE must be an immutable approved image}
+    environment:
+      NODE_ENV: production
+      PORT: "4101"
+      DATABASE_URL: ${CORE_DATABASE_URL:?CORE_DATABASE_URL is required}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CORE_SERVICE_KEY: ${CORE_SERVICE_KEY:?CORE_SERVICE_KEY is required}
+      FINANCIAL_INTEGRITY_ENVIRONMENT: non-production
+    depends_on:
+      core-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [backplane]
+    ports:
+      - "127.0.0.1:${CORE_HOST_PORT:-4101}:4101"
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+
+  api:
+    image: ${BANKTO_API_IMAGE:?BANKTO_API_IMAGE must be an immutable approved image}
+    environment:
+      NODE_ENV: production
+      PORT: "4100"
+      DATABASE_URL: ${API_DATABASE_URL:?API_DATABASE_URL is required}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN:?AUTH0_DOMAIN is required}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required}
+      CORE_SERVICE_URL: http://core:4101
+      CORE_SERVICE_KEY: ${CORE_SERVICE_KEY:?CORE_SERVICE_KEY is required}
+    depends_on:
+      api-db:
+        condition: service_healthy
+      core:
+        condition: service_started
+    networks: [backplane, auth-egress]
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-4100}:4100"
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  backplane:
+    internal: true
+  auth-egress:
+    external: true
+    name: ${BANKTO_AUTH_EGRESS_NETWORK:?BANKTO_AUTH_EGRESS_NETWORK must be an egress-restricted network}
+
+volumes:
+  api-staging-data:
+  core-staging-data:
+  redis-staging-data:
